@@ -15,6 +15,13 @@ android {
         targetSdk = 34
         versionCode = buildNumber
         versionName = "1.0.$buildNumber"
+        // Galaxy phones are arm64; leaving out the x86_64 emulator library halves the download.
+        ndk { abiFilters += "arm64-v8a" }
+    }
+
+    // Compress the native library inside the APK (smaller download).
+    packaging {
+        jniLibs { useLegacyPackaging = true }
     }
 
     // A fixed key, so every new build installs over the previous one
