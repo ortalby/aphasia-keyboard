@@ -12,9 +12,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -24,7 +24,18 @@ jobs:
           gradle-version: "8.14.3"
 
       - name: Build signed APK
-        run: gradle assembleRelease --stacktrace --no-daemon
+        run: |
+          set -o pipefail
+          if ! gradle assembleRelease --no-daemon 2>&1 | tee build.log; then
+            # Surface compiler/Gradle errors as annotations (readable from the checks API).
+            grep -E "^e: |error:|What went wrong" -A6 build.log | head -c 60000 > errors.txt || true
+            split -b 3500 errors.txt part_
+            for f in part_*; do
+              msg=$(sed -e 's/%/%25/g' "$f" | sed -e ':a;N;$!ba;s/\n/%0A/g' | sed -e 's/\r/%0D/g')
+              echo "::error::$msg"
+            done
+            exit 1
+          fi
 
       - name: Publish as a GitHub release
         env:
