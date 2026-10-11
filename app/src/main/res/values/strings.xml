@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">מקלדת אפאזיה</string>
+    <string name="keyboard_name">מקלדת אפאזיה</string>
+    <string name="accessibility_name">מקלדת אפאזיה – קריאת וואטסאפ</string>
+    <string name="accessibility_description">מאפשר למקלדת לקרוא את ההודעות שמופיעות בשיחה הפתוחה בוואטסאפ ולשלוח הודעה רק אחרי שאישרת אותה. הקריאה נעשית על הטלפון בלבד, ושום מידע לא יוצא ממנו.</string>
+    <string name="subtype_hebrew">עברית</string>
+</resources>
