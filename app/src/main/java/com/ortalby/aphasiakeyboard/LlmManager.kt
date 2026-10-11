@@ -20,6 +20,33 @@ import java.io.File
 
 class ModelMissingException : Exception("לא נבחר קובץ מודל")
 
+/** The model file is shorter than the published file: the download did not finish. */
+class ModelIncompleteException(val actual: Long, val expected: Long) :
+    Exception("קובץ המודל לא הורד עד הסוף ($actual מתוך $expected בתים)")
+
+/** The runtime could not read the model file. */
+class ModelCorruptException(cause: Throwable) : Exception(cause.message, cause)
+
+/** Exact sizes of the published model files (Hugging Face, litert-community/gemma-4-E2B-it-litert-lm). */
+object ModelFiles {
+    val KNOWN_SIZES = mapOf(
+        "gemma-4-E2B-it.litertlm" to 2_588_147_712L,
+        "gemma-4-E2B-it-gpu.litertlm" to 2_008_432_640L,
+    )
+
+    sealed class Check {
+        data object Ok : Check()
+        data class Incomplete(val actual: Long, val expected: Long) : Check()
+        data object UnknownFile : Check()
+    }
+
+    fun check(file: File): Check {
+        val expected = KNOWN_SIZES[file.name] ?: return Check.UnknownFile
+        val actual = file.length()
+        return if (actual == expected) Check.Ok else Check.Incomplete(actual, expected)
+    }
+}
+
 /**
  * Runs Gemma on the phone with LiteRT-LM. One engine for the whole app.
  * The engine is released after a few idle minutes so the model's memory is returned to the phone.
@@ -66,7 +93,10 @@ object LlmManager {
     private fun ensureEngine(context: Context): Engine {
         val prefs = AppPrefs(context)
         val path = prefs.modelPath ?: throw ModelMissingException()
-        if (!File(path).isFile) throw ModelMissingException()
+        val file = File(path)
+        if (!file.isFile) throw ModelMissingException()
+        val check = ModelFiles.check(file)
+        if (check is ModelFiles.Check.Incomplete) throw ModelIncompleteException(check.actual, check.expected)
 
         val key = "$path|gpu=${prefs.useGpu}"
         engine?.let { current ->
@@ -85,7 +115,13 @@ object LlmManager {
                 cacheDir = context.cacheDir.absolutePath,
             )
         )
-        newEngine.initialize()
+        try {
+            newEngine.initialize()
+        } catch (e: Exception) {
+            // A failed initialize leaves no native engine behind, so there is nothing to close.
+            if (e.message?.contains("flatbuffer", ignoreCase = true) == true) throw ModelCorruptException(e)
+            throw e
+        }
         engine = newEngine
         loadedKey = key
         isLoaded = true

@@ -586,6 +586,8 @@ class AphasiaKeyboardService : InputMethodService() {
 
     private fun errorMessage(e: Throwable): String = when (e) {
         is ModelMissingException -> "קובץ המודל לא נמצא. פתחי את אפליקציית מקלדת אפאזיה ובדקי את סעיף המודל."
+        is ModelIncompleteException -> "קובץ המודל לא הורד עד הסוף. צריך להוריד אותו שוב (פרטים באפליקציה)."
+        is ModelCorruptException -> "קובץ המודל פגום. צריך להוריד אותו שוב (פרטים באפליקציה)."
         else -> "שגיאה במודל: ${e.message ?: e.javaClass.simpleName}"
     }
 

@@ -193,7 +193,12 @@ class SettingsActivity : ComponentActivity() {
                 return@launch
             }
             found.forEach { file ->
-                addButton(modelList, "${file.name}\n${gb(file.length())}", UiKit.GREEN, filled = false) {
+                val label = when (ModelFiles.check(file)) {
+                    ModelFiles.Check.Ok -> "${file.name}\n${gb(file.length())} ✅ שלם"
+                    is ModelFiles.Check.Incomplete -> "${file.name}\n${gb(file.length())} ❌ לא הורד עד הסוף"
+                    ModelFiles.Check.UnknownFile -> "${file.name}\n${gb(file.length())}"
+                }
+                addButton(modelList, label, UiKit.GREEN, filled = false) {
                     selectModel(file)
                 }
             }
@@ -235,6 +240,11 @@ class SettingsActivity : ComponentActivity() {
                 testOutput.setTextColor(UiKit.RED)
                 testOutput.text = when (e) {
                     is ModelMissingException -> "❌ קובץ המודל לא נמצא – ראי את ההוראות בסעיף 1."
+                    is ModelIncompleteException ->
+                        "❌ ההורדה של קובץ המודל לא הושלמה: ${gb(e.actual)} מתוך ${gb(e.expected)}. " +
+                            "מחקי את הקובץ מההורדות והורידי אותו שוב (ב-WiFi, בלי לסגור את הדפדפן עד הסוף)."
+                    is ModelCorruptException ->
+                        "❌ קובץ המודל פגום, ואי אפשר לטעון אותו. מחקי אותו מההורדות והורידי שוב מהכפתור \"הורדת המודל בדפדפן\".\n\n(${e.message})"
                     else -> "❌ ${e.message ?: e.javaClass.simpleName}"
                 }
             }
@@ -392,8 +402,22 @@ class SettingsActivity : ComponentActivity() {
         val file = prefs.modelPath?.let { File(it) }
         when {
             file != null && file.isFile -> {
-                modelStatus.text = "✅ מודל: ${file.name} (${gb(file.length())})"
-                modelStatus.setTextColor(UiKit.GREEN)
+                when (val check = ModelFiles.check(file)) {
+                    ModelFiles.Check.Ok -> {
+                        modelStatus.text = "✅ מודל: ${file.name} (${gb(file.length())}, הקובץ שלם)"
+                        modelStatus.setTextColor(UiKit.GREEN)
+                    }
+                    is ModelFiles.Check.Incomplete -> {
+                        modelStatus.text = "❌ ${file.name}: ההורדה לא הושלמה – ${gb(check.actual)} מתוך ${gb(check.expected)}. " +
+                            "מחקי את הקובץ מההורדות והורידי שוב."
+                        modelStatus.setTextColor(UiKit.RED)
+                    }
+                    ModelFiles.Check.UnknownFile -> {
+                        modelStatus.text = "⚠️ נבחר הקובץ ${file.name} (${gb(file.length())}). " +
+                            "האפליקציה בנויה לקובץ gemma-4-E2B-it.litertlm – מומלץ להוריד אותו מהכפתור למעלה."
+                        modelStatus.setTextColor(UiKit.ORANGE)
+                    }
+                }
             }
             !access -> {
                 modelStatus.text = "⚠️ אין לאפליקציה גישה לקובץ המודל. לחצי על \"מתן גישה לקובץ המודל\" והדליקי את המתג."
