@@ -8,7 +8,9 @@ import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.ThinkingConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,9 +32,25 @@ class ModelCorruptException(cause: Throwable) : Exception(cause.message, cause)
 /** Exact sizes of the published model files (Hugging Face, litert-community/gemma-4-E2B-it-litert-lm). */
 object ModelFiles {
     val KNOWN_SIZES = mapOf(
+        "gemma-4-E4B-it.litertlm" to 3_659_530_240L,
+        "gemma-4-E4B-it-gpu.litertlm" to 2_969_059_328L,
         "gemma-4-E2B-it.litertlm" to 2_588_147_712L,
         "gemma-4-E2B-it-gpu.litertlm" to 2_008_432_640L,
     )
+
+    const val LARGE_NAME = "gemma-4-E4B-it.litertlm"
+    const val LARGE_URL =
+        "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm"
+    const val SMALL_NAME = "gemma-4-E2B-it.litertlm"
+    const val SMALL_URL =
+        "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
+
+    /** Larger model first. */
+    fun rank(file: File): Int = when {
+        file.name.contains("E4B") -> 0
+        file.name.contains("E2B") -> 1
+        else -> 2
+    }
 
     sealed class Check {
         data object Ok : Check()
@@ -66,23 +84,22 @@ object LlmManager {
     var isLoaded: Boolean = false
         private set
 
-    suspend fun generate(
-        context: Context,
-        systemInstruction: String,
-        prompt: String,
-        maxOutputTokens: Int = 300,
-    ): String = withContext(Dispatchers.IO) {
+    suspend fun generate(context: Context, task: PromptTask): String = withContext(Dispatchers.IO) {
         mutex.withLock {
             mainHandler.removeCallbacks(releaseRunnable)
             try {
                 val eng = ensureEngine(context.applicationContext)
                 val config = ConversationConfig(
-                    systemInstruction = Contents.of(systemInstruction),
-                    samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
-                    maxOutputToken = maxOutputTokens,
+                    systemInstruction = Contents.of(task.system),
+                    initialMessages = task.examples.flatMap { (request, answer) ->
+                        listOf(Message.user(request), Message.model(answer))
+                    },
+                    samplerConfig = SamplerConfig(topK = 40, topP = 0.9, temperature = 0.5),
+                    maxOutputToken = task.maxTokens,
+                    thinkingConfig = ThinkingConfig(enableThinking = false),
                 )
                 eng.createConversation(config).use { conversation ->
-                    conversation.sendMessage(prompt).toString().trim()
+                    conversation.sendMessage(task.prompt).toString().trim()
                 }
             } finally {
                 mainHandler.postDelayed(releaseRunnable, IDLE_RELEASE_MS)
@@ -111,7 +128,7 @@ object LlmManager {
             EngineConfig(
                 modelPath = path,
                 backend = if (prefs.useGpu) Backend.GPU() else Backend.CPU(),
-                maxNumTokens = 2048,
+                maxNumTokens = 4096,
                 cacheDir = context.cacheDir.absolutePath,
             )
         )

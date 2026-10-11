@@ -271,7 +271,7 @@ class AphasiaKeyboardService : InputMethodService() {
         box.visibility = View.VISIBLE
         textView.text = thinkingMessage()
         scope.launch {
-            val result = runModel(Prompts.SIMPLIFY_SYSTEM, Prompts.simplify(msg), maxTokens = 200)
+            val result = runModel(Prompts.simplify(msg))
             if (token != renderToken) return@launch
             button.isEnabled = true
             result.onSuccess { simple ->
@@ -309,7 +309,7 @@ class AphasiaKeyboardService : InputMethodService() {
         val status = addInfo(list, thinkingMessage())
         val token = renderToken
         scope.launch {
-            val result = runModel(Prompts.writerSystem(prefs.profile), Prompts.suggestReplies(snap))
+            val result = runModel(Prompts.suggestReplies(prefs.profile, snap))
             if (token != renderToken) return@launch
             result.onSuccess { raw ->
                 val options = Prompts.parseOptions(raw)
@@ -415,7 +415,7 @@ class AphasiaKeyboardService : InputMethodService() {
         val status = addInfo(list, thinkingMessage())
         val token = renderToken
         scope.launch {
-            val result = runModel(Prompts.writerSystem(prefs.profile), Prompts.completeFragments(words, snap))
+            val result = runModel(Prompts.completeFragments(prefs.profile, words, snap))
             if (token != renderToken) return@launch
             result.onSuccess { raw ->
                 val options = Prompts.parseOptions(raw)
@@ -578,8 +578,8 @@ class AphasiaKeyboardService : InputMethodService() {
 
     // ---------------------------------------------------------------- model helpers
 
-    private suspend fun runModel(system: String, prompt: String, maxTokens: Int = 300): Result<String> =
-        runCatching { LlmManager.generate(this, system, prompt, maxTokens) }
+    private suspend fun runModel(task: PromptTask): Result<String> =
+        runCatching { LlmManager.generate(this, task) }
 
     private fun thinkingMessage(): String =
         if (LlmManager.isLoaded) "⏳ חושבת…" else "⏳ טוענת את המודל… בפעם הראשונה זה יכול לקחת עד חצי דקה"

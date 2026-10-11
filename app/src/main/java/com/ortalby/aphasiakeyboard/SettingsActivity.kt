@@ -118,14 +118,18 @@ class SettingsActivity : ComponentActivity() {
         s.addView(
             UiKit.text(
                 this,
-                "הורידי בדפדפן את הקובץ gemma-4-E2B-it.litertlm (כ-2.6GB) לתיקיית ההורדות. " +
-                    "האפליקציה משתמשת בקובץ ישירות מההורדות – אל תמחקי אותו.",
+                "מומלץ: המודל הגדול (${ModelFiles.LARGE_NAME}, כ-3.4GB) – עברית טובה יותר, אבל איטי יותר וצריך טלפון עם 8GB זיכרון לפחות. " +
+                    "אם הוא לא נטען או איטי מדי, השתמשי במודל הקטן (כ-2.4GB).\n" +
+                    "הקובץ נשמר בהורדות והאפליקציה משתמשת בו משם – אל תמחקי אותו.",
                 17f,
             ),
             UiKit.matchWrap(this, 6),
         )
-        addButton(s, "⬇️ הורדת המודל בדפדפן", UiKit.GREY, filled = false) {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(MODEL_URL)))
+        addButton(s, "⬇️ הורדת המודל הגדול (מומלץ)", UiKit.GREY, filled = false) {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ModelFiles.LARGE_URL)))
+        }
+        addButton(s, "⬇️ הורדת המודל הקטן", UiKit.GREY, filled = false) {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ModelFiles.SMALL_URL)))
         }
         modelStatus = UiKit.text(this, "", 18f, bold = true)
         s.addView(modelStatus, UiKit.matchWrap(this, 10))
@@ -172,7 +176,7 @@ class SettingsActivity : ComponentActivity() {
                 val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                 downloads.walkTopDown().maxDepth(3)
                     .filter { it.isFile && it.name.lowercase(Locale.ROOT).endsWith(".litertlm") }
-                    .sortedByDescending { it.lastModified() }
+                    .sortedWith(compareBy<File> { ModelFiles.rank(it) }.thenByDescending { it.lastModified() })
                     .toList()
             }
             modelList.removeAllViews()
@@ -188,8 +192,9 @@ class SettingsActivity : ComponentActivity() {
                 )
                 return@launch
             }
-            if (autoSelect && found.size == 1) {
-                selectModel(found.first())
+            val complete = found.filter { ModelFiles.check(it) == ModelFiles.Check.Ok }
+            if (autoSelect && complete.isNotEmpty()) {
+                selectModel(complete.first())
                 return@launch
             }
             found.forEach { file ->
@@ -225,16 +230,13 @@ class SettingsActivity : ComponentActivity() {
         val started = System.currentTimeMillis()
         lifecycleScope.launch {
             val result = runCatching {
-                LlmManager.generate(
-                    this@SettingsActivity,
-                    Prompts.writerSystem(prefs.profile),
-                    Prompts.completeFragments("מחר רופא 10", null),
-                )
+                LlmManager.generate(this@SettingsActivity, Prompts.completeFragments(prefs.profile, "מחר רופא 10", null))
             }
             val seconds = (System.currentTimeMillis() - started) / 1000.0
             result.onSuccess { raw ->
                 val options = Prompts.parseOptions(raw)
-                testOutput.text = "בדיקה: «מחר רופא 10»\n\n" + options.joinToString("\n") { "• $it" } +
+                val modelName = prefs.modelPath?.let { File(it).name } ?: ""
+                testOutput.text = "בדיקה ($modelName): «מחר רופא 10»\n\n" + options.joinToString("\n") { "• $it" } +
                     "\n\n(${String.format(Locale.ROOT, "%.1f", seconds)} שניות)"
             }.onFailure { e ->
                 testOutput.setTextColor(UiKit.RED)
@@ -414,7 +416,7 @@ class SettingsActivity : ComponentActivity() {
                     }
                     ModelFiles.Check.UnknownFile -> {
                         modelStatus.text = "⚠️ נבחר הקובץ ${file.name} (${gb(file.length())}). " +
-                            "האפליקציה בנויה לקובץ gemma-4-E2B-it.litertlm – מומלץ להוריד אותו מהכפתור למעלה."
+                            "מומלץ להוריד את ${ModelFiles.LARGE_NAME} מהכפתור למעלה."
                         modelStatus.setTextColor(UiKit.ORANGE)
                     }
                 }
@@ -450,8 +452,4 @@ class SettingsActivity : ComponentActivity() {
 
     private fun gb(bytes: Long): String = String.format(Locale.ROOT, "%.2fGB", bytes / (1024.0 * 1024.0 * 1024.0))
 
-    companion object {
-        private const val MODEL_URL =
-            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
-    }
 }
