@@ -4,25 +4,21 @@ import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.os.StatFs
-import android.provider.OpenableColumns
+import android.os.Environment
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.text.InputType
 import android.view.View
-import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -37,16 +33,10 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var speaker: Speaker
 
     private lateinit var modelStatus: TextView
-    private lateinit var copyProgress: ProgressBar
-    private lateinit var pickModelButton: TextView
     private lateinit var keyboardStatus: TextView
     private lateinit var accessibilityStatus: TextView
     private lateinit var voiceStatus: TextView
     private lateinit var testOutput: TextView
-
-    private val pickModel = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) copyModel(uri)
-    }
 
     private fun dp(v: Int) = UiKit.dp(this, v)
 
@@ -120,13 +110,16 @@ class SettingsActivity : ComponentActivity() {
 
     // ---------------------------------------------------------------- model
 
+    private lateinit var modelList: LinearLayout
+    private lateinit var storageAccessButton: TextView
+
     private fun buildModelSection(page: LinearLayout) {
         val s = section(page, "1. המודל")
         s.addView(
             UiKit.text(
                 this,
-                "הורידי בדפדפן את הקובץ gemma-4-E2B-it.litertlm (כ-2.6GB) מהקישור למטה, ובחרי אותו כאן. " +
-                    "האפליקציה מעתיקה אותו לאחסון הפרטי שלה; אחרי ההעתקה אפשר למחוק את הקובץ המקורי מההורדות.",
+                "הורידי בדפדפן את הקובץ gemma-4-E2B-it.litertlm (כ-2.6GB) לתיקיית ההורדות. " +
+                    "האפליקציה משתמשת בקובץ ישירות מההורדות – אל תמחקי אותו.",
                 17f,
             ),
             UiKit.matchWrap(this, 6),
@@ -136,14 +129,15 @@ class SettingsActivity : ComponentActivity() {
         }
         modelStatus = UiKit.text(this, "", 18f, bold = true)
         s.addView(modelStatus, UiKit.matchWrap(this, 10))
-        copyProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 1000
-            visibility = View.GONE
+
+        storageAccessButton = addButton(s, "🔓 מתן גישה לקובץ המודל", UiKit.PRIMARY) {
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
+            )
         }
-        s.addView(copyProgress, UiKit.matchWrap(this, 6))
-        pickModelButton = addButton(s, "📂 בחירת קובץ מודל", UiKit.PRIMARY) {
-            pickModel.launch(arrayOf("*/*"))
-        }
+        addButton(s, "🔎 חיפוש המודל בהורדות", UiKit.PRIMARY, filled = false) { scanForModels(autoSelect = false) }
+        modelList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        s.addView(modelList, UiKit.matchWrap(this, 4))
 
         val gpu = CheckBox(this).apply {
             text = "להריץ על המעבד הגרפי (GPU) – מהיר יותר"
@@ -161,78 +155,62 @@ class SettingsActivity : ComponentActivity() {
         s.addView(testOutput, UiKit.matchWrap(this, 8))
     }
 
-    private fun copyModel(uri: Uri) {
-        var name = ""
-        var size = -1L
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
-            if (c.moveToFirst()) {
-                name = c.getString(0) ?: ""
-                if (!c.isNull(1)) size = c.getLong(1)
-            }
-        }
-        if (!name.lowercase(Locale.ROOT).endsWith(".litertlm")) {
-            modelStatus.text = "❌ הקובץ \"$name\" אינו קובץ .litertlm"
-            modelStatus.setTextColor(UiKit.RED)
+    private fun hasStorageAccess(): Boolean = Environment.isExternalStorageManager()
+
+    /** Finds .litertlm files in Downloads (and its sub-folders) and lists them to choose from. */
+    private fun scanForModels(autoSelect: Boolean) {
+        modelList.removeAllViews()
+        if (!hasStorageAccess()) {
+            modelList.addView(
+                UiKit.text(this, "קודם צריך ללחוץ על \"מתן גישה לקובץ המודל\" ולהדליק את המתג.", 17f, UiKit.ORANGE),
+                UiKit.matchWrap(this, 6),
+            )
             return
         }
-        val free = StatFs(filesDir.absolutePath).availableBytes
-        if (size > 0 && free < size + 300L * 1024 * 1024) {
-            modelStatus.text = "❌ אין מספיק מקום פנוי. צריך ${gb(size + 300L * 1024 * 1024)}, פנוי ${gb(free)}."
-            modelStatus.setTextColor(UiKit.RED)
-            return
-        }
-
-        val target = File(filesDir, "model.litertlm")
-        val partial = File(filesDir, "model.litertlm.part")
-        pickModelButton.isEnabled = false
-        copyProgress.visibility = View.VISIBLE
-        copyProgress.progress = 0
-        modelStatus.setTextColor(UiKit.TEXT)
-        modelStatus.text = "מעתיקה את $name… אל תסגרי את המסך."
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
         lifecycleScope.launch {
-            val result = runCatching {
-                LlmManager.release()
-                withContext(Dispatchers.IO) {
-                    val input = contentResolver.openInputStream(uri) ?: error("לא ניתן לפתוח את הקובץ")
-                    input.use { inp ->
-                        partial.outputStream().use { out ->
-                            val buffer = ByteArray(4 * 1024 * 1024)
-                            var copied = 0L
-                            var lastShown = -1
-                            while (true) {
-                                val n = inp.read(buffer)
-                                if (n < 0) break
-                                out.write(buffer, 0, n)
-                                copied += n
-                                if (size > 0) {
-                                    val permille = (copied * 1000 / size).toInt()
-                                    if (permille != lastShown) {
-                                        lastShown = permille
-                                        withContext(Dispatchers.Main) {
-                                            copyProgress.progress = permille
-                                            modelStatus.text = "מעתיקה… ${permille / 10}% (${gb(copied)} מתוך ${gb(size)})"
-                                        }
-                                    }
-                                }
-                            }
-                            out.fd.sync()
-                        }
-                    }
-                    if (target.exists()) target.delete()
-                    if (!partial.renameTo(target)) error("שמירת הקובץ נכשלה")
-                }
-                prefs.modelPath = target.absolutePath
+            val found = withContext(Dispatchers.IO) {
+                val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                downloads.walkTopDown().maxDepth(3)
+                    .filter { it.isFile && it.name.lowercase(Locale.ROOT).endsWith(".litertlm") }
+                    .sortedByDescending { it.lastModified() }
+                    .toList()
             }
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            pickModelButton.isEnabled = true
-            copyProgress.visibility = View.GONE
-            result.onFailure { e ->
-                partial.delete()
-                modelStatus.text = "❌ ההעתקה נכשלה: ${e.message}"
-                modelStatus.setTextColor(UiKit.RED)
-            }.onSuccess { refreshStatuses() }
+            modelList.removeAllViews()
+            if (found.isEmpty()) {
+                modelList.addView(
+                    UiKit.text(
+                        this@SettingsActivity,
+                        "לא נמצא קובץ .litertlm בהורדות. אם ההורדה עדיין רצה, חכי שתסתיים ונסי שוב.",
+                        17f,
+                        UiKit.ORANGE,
+                    ),
+                    UiKit.matchWrap(this@SettingsActivity, 6),
+                )
+                return@launch
+            }
+            if (autoSelect && found.size == 1) {
+                selectModel(found.first())
+                return@launch
+            }
+            found.forEach { file ->
+                addButton(modelList, "${file.name}\n${gb(file.length())}", UiKit.GREEN, filled = false) {
+                    selectModel(file)
+                }
+            }
+        }
+    }
+
+    private fun selectModel(file: File) {
+        lifecycleScope.launch {
+            LlmManager.release()
+            prefs.modelPath = file.absolutePath
+            // A copy made by an earlier version is no longer needed.
+            withContext(Dispatchers.IO) {
+                File(filesDir, "model.litertlm").takeIf { it.absolutePath != file.absolutePath }?.delete()
+                File(filesDir, "model.litertlm.part").delete()
+            }
+            modelList.removeAllViews()
+            refreshStatuses()
         }
     }
 
@@ -256,7 +234,7 @@ class SettingsActivity : ComponentActivity() {
             }.onFailure { e ->
                 testOutput.setTextColor(UiKit.RED)
                 testOutput.text = when (e) {
-                    is ModelMissingException -> "❌ עדיין לא נבחר קובץ מודל."
+                    is ModelMissingException -> "❌ קובץ המודל לא נמצא – ראי את ההוראות בסעיף 1."
                     else -> "❌ ${e.message ?: e.javaClass.simpleName}"
                 }
             }
@@ -409,15 +387,22 @@ class SettingsActivity : ComponentActivity() {
     // ---------------------------------------------------------------- status
 
     private fun refreshStatuses() {
-        if (copyProgress.visibility != View.VISIBLE) {
-            val path = prefs.modelPath
-            val file = path?.let { File(it) }
-            if (file != null && file.isFile) {
-                modelStatus.text = "✅ מודל מותקן (${gb(file.length())})"
+        val access = hasStorageAccess()
+        storageAccessButton.visibility = if (access) View.GONE else View.VISIBLE
+        val file = prefs.modelPath?.let { File(it) }
+        when {
+            file != null && file.isFile -> {
+                modelStatus.text = "✅ מודל: ${file.name} (${gb(file.length())})"
                 modelStatus.setTextColor(UiKit.GREEN)
-            } else {
+            }
+            !access -> {
+                modelStatus.text = "⚠️ אין לאפליקציה גישה לקובץ המודל. לחצי על \"מתן גישה לקובץ המודל\" והדליקי את המתג."
+                modelStatus.setTextColor(UiKit.ORANGE)
+            }
+            else -> {
                 modelStatus.text = "⚠️ עדיין לא נבחר קובץ מודל"
                 modelStatus.setTextColor(UiKit.ORANGE)
+                scanForModels(autoSelect = true)
             }
         }
         setStatus(keyboardStatus, isKeyboardEnabled(), "✅ המקלדת מופעלת", "⚠️ המקלדת עוד לא מופעלת")

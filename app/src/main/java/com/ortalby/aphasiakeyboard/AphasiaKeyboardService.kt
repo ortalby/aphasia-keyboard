@@ -585,7 +585,7 @@ class AphasiaKeyboardService : InputMethodService() {
         if (LlmManager.isLoaded) "⏳ חושבת…" else "⏳ טוענת את המודל… בפעם הראשונה זה יכול לקחת עד חצי דקה"
 
     private fun errorMessage(e: Throwable): String = when (e) {
-        is ModelMissingException -> "לא נבחר קובץ מודל. פתחי את אפליקציית מקלדת אפאזיה ובחרי את קובץ המודל."
+        is ModelMissingException -> "קובץ המודל לא נמצא. פתחי את אפליקציית מקלדת אפאזיה ובדקי את סעיף המודל."
         else -> "שגיאה במודל: ${e.message ?: e.javaClass.simpleName}"
     }
 
