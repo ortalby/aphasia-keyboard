@@ -1,5 +1,7 @@
 package com.ortalby.aphasiakeyboard
 
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
@@ -156,6 +158,7 @@ class SettingsActivity : ComponentActivity() {
 
         addButton(s, "🧪 בדיקת המודל", UiKit.ORANGE, filled = false) { testModel() }
         testOutput = UiKit.text(this, "", 18f)
+        showLastCrash()
         s.addView(testOutput, UiKit.matchWrap(this, 8))
     }
 
@@ -448,6 +451,33 @@ class SettingsActivity : ComponentActivity() {
     private fun setStatus(view: TextView, ok: Boolean, okText: String, badText: String) {
         view.text = if (ok) okText else badText
         view.setTextColor(if (ok) UiKit.GREEN else UiKit.ORANGE)
+    }
+
+    /** If the app was closed by a crash or for lack of memory, says so (once per event) with the details. */
+    private fun showLastCrash() {
+        val am = getSystemService(ActivityManager::class.java)
+        val exit = am.getHistoricalProcessExitReasons(packageName, 0, 1).firstOrNull() ?: return
+        val sp = getSharedPreferences("crash_seen", MODE_PRIVATE)
+        if (sp.getLong("ts", 0L) == exit.timestamp) return
+        sp.edit().putLong("ts", exit.timestamp).apply()
+
+        val totalRam = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }.totalMem
+        val reason = when (exit.reason) {
+            ApplicationExitInfo.REASON_LOW_MEMORY -> "הטלפון סגר את האפליקציה כי נגמר הזיכרון."
+            ApplicationExitInfo.REASON_CRASH_NATIVE -> "המודל קרס (קריסה של מנוע המודל)."
+            ApplicationExitInfo.REASON_CRASH -> "האפליקציה קרסה."
+            ApplicationExitInfo.REASON_ANR -> "האפליקציה נתקעה."
+            else -> return
+        }
+        val model = prefs.modelPath?.let { File(it).name } ?: "-"
+        val details = StringBuilder()
+            .append("❌ בפעם הקודמת: ").append(reason).append('\n')
+            .append("מודל: ").append(model).append(", GPU: ").append(if (prefs.useGpu) "כן" else "לא").append('\n')
+            .append("טלפון: ").append(android.os.Build.MODEL).append(", זיכרון: ").append(gb(totalRam)).append('\n')
+            .append("זיכרון בזמן הסגירה: ").append(gb(exit.pss * 1024L))
+        exit.description?.takeIf { it.isNotBlank() }?.let { details.append('\n').append(it) }
+        testOutput.setTextColor(UiKit.RED)
+        testOutput.text = details.toString()
     }
 
     private fun gb(bytes: Long): String = String.format(Locale.ROOT, "%.2fGB", bytes / (1024.0 * 1024.0 * 1024.0))

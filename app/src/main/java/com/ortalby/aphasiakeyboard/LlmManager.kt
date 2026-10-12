@@ -128,7 +128,7 @@ object LlmManager {
             EngineConfig(
                 modelPath = path,
                 backend = if (prefs.useGpu) Backend.GPU() else Backend.CPU(),
-                maxNumTokens = 4096,
+                maxNumTokens = 2048,
                 cacheDir = context.cacheDir.absolutePath,
             )
         )
